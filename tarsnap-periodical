@@ -33,7 +33,7 @@ die() {
 
 usage() {
   cat <<E
-USAGE: $0 OPTION...
+USAGE: $0 OPTION... [-- tarsnap_option...]
 
 Required options:
   -p, --snapshot-path=PATH    The path to be snapshotted by tarsnap
@@ -51,6 +51,9 @@ Other options:
                               aborted. If the timestamp format has a precision
                               of a day, a snapshot can be only taken once a
                               day. Default: %Y%m%d
+
+Tarsnap options will be passed directly to tarsnap when creating a snapshot.
+Useful for things like --maxbw.
 
 E
 }
@@ -88,11 +91,6 @@ while true; do
     die "The dungeon collapsed" ;;
   esac
 done
-
-if [ "$#" -ne 0 ]; then
-  >&2 usage
-  false
-fi
 
 success=true
 
@@ -183,7 +181,7 @@ lock_file="$state_dir/lock"
 
   info "Creating snapshot %s" "$new_name"
   # --no-print-stats as long as tarsnap prints them to stderr.
-  tarsnap -c --no-print-stats -f "$new_name" -C "$snapshot_path" .
+  tarsnap -c --no-print-stats "$@" -f "$new_name" -C "$snapshot_path" .
   >>"$names_file" printf "%s\n" "$new_name"
 
   head -n -"$num_snapshots" "$names_file" | \

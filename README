@@ -1,6 +1,6 @@
 tarsnap-periodical – call from cron to run tarsnap periodically
 
-USAGE: tarsnap-periodical OPTION...
+USAGE: tarsnap-periodical OPTION... [-- tarsnap_option...]
 
 Required options:
   -p, --snapshot-path=PATH    The path to be snapshotted by tarsnap
@@ -18,4 +18,7 @@ Other options:
                               aborted. If the timestamp format has a precision
                               of a day, a snapshot can be only taken once a
                               day. Default: %Y%m%d
+
+Tarsnap options will be passed directly to tarsnap when creating a snapshot.
+Useful for things like --maxbw.
 
