@@ -1,0 +1,197 @@
+#!/bin/sh
+
+# tarsnap-periodical – call from cron to run tarsnap periodically
+# Copyright © 2009 Johan Kiviniemi
+#
+# Permission to use, copy, modify, and/or distribute this software for any
+# purpose with or without fee is hereby granted, provided that the above
+# copyright notice and this permission notice appear in all copies.
+#
+# THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+# WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+# MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+# ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+# WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+# ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+# OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+
+set -e
+
+info() {
+  local first="$1"; shift
+  printf "$first\n" "$@"
+}
+
+warn() {
+  >&2 info "$@"
+}
+
+die() {
+  warn "$@"
+  false
+}
+
+usage() {
+  cat <<E
+USAGE: $0 OPTION...
+
+Required options:
+  -p, --snapshot-path=PATH    The path to be snapshotted by tarsnap
+  -n, --num-snapshots=NUM     The number of snapshots to keep
+
+Other options:
+  -h, --help                  Display this help
+  -l, --size-limit=LIMIT      The size limit for PATH in bytes. If PATH is
+                              bigger, the snapshot will be aborted. This is to
+                              avoid surprises in case PATH accidentally gains
+                              size.
+  -f, --timestamp-format=FMT  The current time, formatted by FMT, will be
+                              included in the snapshot name. If a snapshot by
+                              such name already exists, the snapshot will be
+                              aborted. If the timestamp format has a precision
+                              of a day, a snapshot can be only taken once a
+                              day. Default: %Y%m%d
+
+E
+}
+
+snapshot_path=
+size_limit=
+timestamp_format="%Y%m%d"
+num_snapshots=
+
+getopt=getopt
+if which gnugetopt >/dev/null 2>&1; then
+  getopt=gnugetopt
+fi
+
+opts="$("$getopt" -s sh -o hp:l:f:n: \
+                  -l help,snapshot-path:,size-limit:,timestamp-format:,num-snapshots: \
+                  -- "$@")"
+eval set -- "$opts"
+
+while true; do
+  case "$1" in
+  -h|--help)
+    usage; exit ;;
+  -p|--snapshot-path)
+    snapshot_path="$2"; shift 2 ;;
+  -l|--size-limit)
+    size_limit="$2"; shift 2 ;;
+  -f|--timestamp-format)
+    timestamp_format="$2"; shift 2 ;;
+  -n|--num-snapshots)
+    num_snapshots="$2"; shift 2 ;;
+  --)
+    shift; break ;;
+  *)
+    die "The dungeon collapsed" ;;
+  esac
+done
+
+if [ "$#" -ne 0 ]; then
+  >&2 usage
+  false
+fi
+
+success=true
+
+if [ -z "$snapshot_path" ]; then
+  warn "Snapshot path expected"
+  success=false
+elif ! [ -e "$snapshot_path" ]; then
+  warn "Snapshot path %s doesn't exist" "$snapshot_path"
+  success=false
+fi
+
+if [ -n "$size_limit" ] && ! [ "$size_limit" -gt 0 ]; then
+  warn "Invalid size limit %s" "$size_limit"
+  success=false
+fi
+
+if [ -z "$timestamp_format" ]; then
+  warn "Timestamp format expected"
+  success=false
+fi
+
+if [ -z "$num_snapshots" ]; then
+  warn "Number of snapshots expected"
+  success=false
+elif ! [ "$num_snapshots" -gt 0 ]; then
+  warn "Invalid number of snapshots %s" "$num_snapshots"
+  success=false
+fi
+
+if ! "$success"; then
+  printf "\n"
+  >&2 usage
+  false
+fi
+
+need_cmd() {
+  if ! which "$1" >/dev/null; then
+    die "Command %s not found" "$1"
+  fi
+}
+
+need_cmd flock
+need_cmd sha1sum
+need_cmd sponge
+need_cmd tarsnap
+
+if [ -n "$size_limit" ]; then
+  size="$(du -s "$snapshot_path")"
+  size="${size%%	*}"  # Tabulator before *, \011 doesn’t work.
+  [ "$size" -ge 0 ]
+
+  if [ "$size" -ge "$size_limit" ]; then
+    die "size (%s) >= size_limit (%s)" "$size" "$size_limit"
+  fi
+
+  size_110="$((11*$size/10))"
+  if [ "$size_110" -ge "$size_limit" ]; then
+    warn "Warning: size+10%% (%s) >= size_limit (%s)" "$size_110" "$size_limit"
+  fi
+
+  size_160="$((16*$size/10))"
+  if [ "$size_160" -lt "$size_limit" ]; then
+    warn "Warning: size+60%% (%s) < size_limit (%s)" "$size_160" "$size_limit"
+  fi
+fi
+
+state_dir=/var/lib/tarsnap-periodical
+mkdir -p "$state_dir"
+
+lock_file="$state_dir/lock"
+
+(
+  flock 3
+
+  names_file="$state_dir/snapshot-names"
+  touch "$names_file"
+
+  remote_list_checksum="$(tarsnap --list-archives | LC_ALL=C sort | sha1sum)"
+  local_list_checksum="$(LC_ALL=C sort "$names_file" | sha1sum)"
+  if [ "$remote_list_checksum" != "$local_list_checksum" ]; then
+    die "%s and %s do not match" "tarsnap --list-archives" "$names_file"
+  fi
+
+  new_name="$(hostname)-snapshot-$(date +"$timestamp_format")"
+  if grep -Fqx "$new_name" "$names_file"; then
+    die "Snapshot %s already exists" "$new_name"
+  fi
+
+  info "Creating snapshot %s" "$new_name"
+  # --no-print-stats as long as tarsnap prints them to stderr.
+  tarsnap -c --no-print-stats -f "$new_name" -C "$snapshot_path" .
+  >>"$names_file" printf "%s\n" "$new_name"
+
+  head -n -"$num_snapshots" "$names_file" | \
+  while read old_name; do
+    info "Deleting snapshot %s" "$old_name"
+    tarsnap -d --no-print-stats -f "$old_name"
+    grep -Fvx "$old_name" "$names_file" | sponge "$names_file"
+  done
+) 3>"$lock_file"
+
+# vim:set et sw=2 sts=2:

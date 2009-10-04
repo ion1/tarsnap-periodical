@@ -1,0 +1,21 @@
+tarsnap-periodical – call from cron to run tarsnap periodically
+
+USAGE: tarsnap-periodical OPTION...
+
+Required options:
+  -p, --snapshot-path=PATH    The path to be snapshotted by tarsnap
+  -n, --num-snapshots=NUM     The number of snapshots to keep
+
+Other options:
+  -h, --help                  Display this help
+  -l, --size-limit=LIMIT      The size limit for PATH in bytes. If PATH is
+                              bigger, the snapshot will be aborted. This is to
+                              avoid surprises in case PATH accidentally gains
+                              size.
+  -f, --timestamp-format=FMT  The current time, formatted by FMT, will be
+                              included in the snapshot name. If a snapshot by
+                              such name already exists, the snapshot will be
+                              aborted. If the timestamp format has a precision
+                              of a day, a snapshot can be only taken once a
+                              day. Default: %Y%m%d
+
