@@ -41,10 +41,10 @@ Required options:
 
 Other options:
   -h, --help                  Display this help
-  -l, --size-limit=LIMIT      The size limit for PATH in bytes. If PATH is
-                              bigger, the snapshot will be aborted. This is to
-                              avoid surprises in case PATH accidentally gains
-                              size.
+  -l, --size-limit=LIMIT      The size limit for the compressed snapshot in
+                              bytes. If the snapshot is bigger, it will be
+                              aborted. This is to avoid surprises in case PATH
+                              accidentally gains size.
   -f, --timestamp-format=FMT  The current time, formatted by FMT, will be
                               included in the snapshot name. If a snapshot by
                               such name already exists, the snapshot will be
@@ -133,13 +133,16 @@ need_cmd() {
 }
 
 need_cmd flock
+need_cmd sed
 need_cmd sha1sum
 need_cmd sponge
 need_cmd tarsnap
 
 if [ -n "$size_limit" ]; then
-  size="$(du -s "$snapshot_path")"
-  size="${size%%	*}"  # Tabulator before *, \011 doesn’t work.
+  size="$(
+    2>&1 tarsnap -c --dry-run --print-stats -f test -C "$snapshot_path" . | \
+    sed -ne 's/^This archive \+\([0-9]\+\) \+\([0-9]\+\)$/\2/p'
+  )"
   [ "$size" -ge 0 ]
 
   if [ "$size" -ge "$size_limit" ]; then
